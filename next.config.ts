@@ -3,16 +3,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   eslint: {
-    // verhindert Build-Abbruch bei ESLint-Fehlern
+    // Verhindert Build-Abbruch wegen ESLint-Fehlern
     ignoreDuringBuilds: true,
   },
   typescript: {
-    // verhindert Build-Abbruch bei TS-Fehlern
+    // Verhindert Build-Abbruch wegen TypeScript-Fehlern
     ignoreBuildErrors: true,
-  },
-  images: {
-    dangerouslyAllowSVG: true,
-    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
 };
 
