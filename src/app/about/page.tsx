@@ -37,7 +37,7 @@ export default function AboutPage() {
           {/* Headline mit Logo links */}
           <div className="mt-2 flex items-center gap-3">
             <Image
-              src="/fortune-logo.png"   // <-- Datei muss in /public/fortune-logo.png liegen
+              src="/fortune-logo.png"   // Datei muss in /public/fortune-logo.png liegen
               alt="Fortune-1411 Logo"
               width={40}
               height={40}
@@ -114,8 +114,8 @@ export default function AboutPage() {
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 md:p-8">
           <h2 className="text-xl font-semibold">Sicherheit & Fairness</h2>
           <p className="mt-3 text-white/70">
-            Unser Modell ist einfach: <em>„Denn wenn wir weniger Steuern bezahlen, können wir Ihnen mehr Gewinn
-            ausschütten.“</em> Dieser Vorteil fließt direkt in die Rendite unserer Partner – transparent und nachvollziehbar.
+            Unser Modell ist einfach: <em>&quot;Denn wenn wir weniger Steuern bezahlen, können wir Ihnen mehr Gewinn
+            ausschütten.&quot;</em> Dieser Vorteil fließt direkt in die Rendite unserer Partner – transparent und nachvollziehbar.
           </p>
           <ul className="mt-4 list-disc pl-5 text-white/70 space-y-2">
             <li>Klare Strukturen und nachvollziehbare Regeln.</li>
@@ -153,7 +153,7 @@ export default function AboutPage() {
       {/* Slogan / CTA */}
       <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-600/20 via-white/5 to-white/5 p-8 md:p-10">
         <blockquote className="text-xl md:text-2xl font-semibold">
-          "The sky is the Limit"
+          &quot;The sky is the Limit&quot;
         </blockquote>
         <p className="mt-3 max-w-3xl text-white/70">
           Unser Versprechen: Verlässlichkeit, Transparenz und eine klare Vision – Wohlstand durch Gemeinschaft,
