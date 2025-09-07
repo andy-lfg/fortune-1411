@@ -153,7 +153,7 @@ export default function AboutPage() {
       {/* Slogan / CTA */}
       <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-600/20 via-white/5 to-white/5 p-8 md:p-10">
         <blockquote className="text-xl md:text-2xl font-semibold">
-          &quot;The sky is the Limit&quot;
+          &ldquo;The sky is the Limit&rdquo;
         </blockquote>
         <p className="mt-3 max-w-3xl text-white/70">
           Unser Versprechen: Verlässlichkeit, Transparenz und eine klare Vision – Wohlstand durch Gemeinschaft,
