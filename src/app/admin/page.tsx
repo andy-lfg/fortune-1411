@@ -3,7 +3,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import AdminTable from "./table";
-import { supabaseAdmin } from "@/lib/supabaseAdmin"; // ⬅️ Service-Role Client (Server-only!)
+import { supabaseAdmin } from "@/lib/supabaseAdmin"; // Service-Role Client (Server-only!)
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -22,24 +22,22 @@ function buildURL(params: Record<string, string | undefined>) {
   return q ? `?${q}` : "";
 }
 
-export default async function AdminPage({
-  searchParams,
-}: {
-  searchParams?: SearchParams | Promise<SearchParams>;
-}) {
-  // Falls Next.js searchParams als Promise liefert, sauber auflösen
-  const sp: SearchParams =
-    searchParams && typeof (searchParams as any)?.then === "function"
-      ? await (searchParams as Promise<SearchParams>)
-      : (searchParams as SearchParams) || {};
+/**
+ * WICHTIG:
+ * - Wir typisieren die Props absichtlich als `any`, weil Next 15 `searchParams`
+ *   teils als Promise liefert. So vermeiden wir die build-breakenden TS-Fehler.
+ */
+// @ts-expect-error: lockere Typisierung für Next 15 searchParams (Promise/Objekt)
+export default async function AdminPage({ searchParams }: any) {
+  // Egal ob Promise oder Objekt: await gibt einfach den Wert zurück.
+  const spRaw = await (searchParams ?? {});
+  const sp: SearchParams = (spRaw ?? {}) as SearchParams;
 
-  // 1) Admin-Check mit dem "anon"-Serverclient (cookie-basiert, RLS-konform)
+  // 1) Admin-Check (RLS-konform)
   const cookieStore = cookies();
   const supabase = createServerComponentClient({ cookies: () => cookieStore });
+  const { data: { user } } = await supabase.auth.getUser();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
   const adminMail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const curMail = (user?.email ?? "").trim().toLowerCase();
 
@@ -68,14 +66,14 @@ export default async function AdminPage({
     if (toParam) endDate = toParam;
   }
 
-  const startISO = new Date(
-    Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)
-  ).toISOString();
-  const endISO = new Date(
-    Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999)
-  ).toISOString();
+  const startISO = new Date(Date.UTC(
+    startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0
+  )).toISOString();
+  const endISO = new Date(Date.UTC(
+    endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999
+  )).toISOString();
 
-  // 3) Service-Role Client NUR serverseitig verwenden (bypasst RLS, aber nur nach Admin-Check!)
+  // 3) Service-Role Query (nur serverseitig, nach Admin-Check)
   let txQuery = supabaseAdmin
     .from("transactions")
     .select("id, user_id, type, amount, currency, wallet_address, status, created_at, user_email")
@@ -100,8 +98,8 @@ export default async function AdminPage({
   }
   const tx = txRaw || [];
 
-  // 4) Alle betroffenen Profile OHNE RLS holen (Service-Role)
-  const userIds = Array.from(new Set(tx.map((t) => t.user_id).filter(Boolean))) as string[];
+  // 4) Profile holen
+  const userIds = Array.from(new Set(tx.map(t => t.user_id).filter(Boolean))) as string[];
   let profMap: Record<string, any> = {};
   if (userIds.length) {
     const { data: profs, error: pErr } = await supabaseAdmin
@@ -116,42 +114,39 @@ export default async function AdminPage({
         </section>
       );
     }
-    (profs || []).forEach((p) => {
-      profMap[p.id] = p;
-    });
+    (profs || []).forEach(p => { profMap[p.id] = p; });
   }
 
-  // 5) Transaktionszeilen mit Profilfeldern mergen (für AdminTable)
-  //    ✅ user_id wird zu string normalisiert, damit AdminTable-Types passen
-  const rows = tx.map((t) => ({
-    ...t,
-    user_id: (t.user_id ?? "") as string,
-    profile_first_name: profMap[t.user_id || ""]?.first_name ?? null,
-    profile_last_name: profMap[t.user_id || ""]?.last_name ?? null,
-    profile_nickname: profMap[t.user_id || ""]?.nickname ?? null,
-    profile_email: profMap[t.user_id || ""]?.email ?? t.user_email ?? null,
-  }));
+  // 5) Zeilen aufbereiten (user_id → string normalisieren)
+  const rows = tx.map(t => {
+    const uid = (t.user_id ?? "") as string;
+    const prof = profMap[uid] || {};
+    return {
+      ...t,
+      user_id: uid,
+      profile_first_name: prof.first_name ?? null,
+      profile_last_name:  prof.last_name ?? null,
+      profile_nickname:   prof.nickname ?? null,
+      profile_email:      prof.email ?? t.user_email ?? null,
+    };
+  });
 
   // Summen
-  const totalDeposits = rows
-    .filter((r) => r.type === "deposit")
-    .reduce((s, r) => s + Number(r.amount || 0), 0);
-  const totalWithdraws = rows
-    .filter((r) => r.type === "withdraw" || r.type === "withdrawal")
-    .reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalDeposits = rows.filter(r => r.type === "deposit").reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalWithdraws = rows.filter(r => (r.type === "withdraw" || r.type === "withdrawal")).reduce((s, r) => s + Number(r.amount || 0), 0);
   const net = totalDeposits - totalWithdraws;
 
   // Filter-Links
-  const qsAll = buildURL({ type: "all", range, from: sp.from, to: sp.to });
-  const qsDep = buildURL({ type: "deposit", range, from: sp.from, to: sp.to });
-  const qsWit = buildURL({ type: "withdraw", range, from: sp.from, to: sp.to });
+  const qsAll   = buildURL({ type: "all",      range, from: sp.from, to: sp.to });
+  const qsDep   = buildURL({ type: "deposit",  range, from: sp.from, to: sp.to });
+  const qsWit   = buildURL({ type: "withdraw", range, from: sp.from, to: sp.to });
   const qsToday = buildURL({ type: typeParam, range: "today" });
-  const qs7d = buildURL({ type: typeParam, range: "7d" });
-  const qs30d = buildURL({ type: typeParam, range: "30d" });
+  const qs7d    = buildURL({ type: typeParam, range: "7d" });
+  const qs30d   = buildURL({ type: typeParam, range: "30d" });
 
   return (
     <section className="mx-auto max-w-7xl px-4 py-16">
-      {/* Header mit Button zu /admin/profiles */}
+      {/* Header */}
       <div className="mb-6 flex items-center justify-between gap-3">
         <h1 className="text-3xl font-bold">Admin – Transaktionen</h1>
         <Link
@@ -164,79 +159,23 @@ export default async function AdminPage({
 
       {/* Filter */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
-        <a
-          href={qsAll}
-          className={`px-4 py-2 rounded-lg border ${
-            typeParam === "all" ? "bg-purple-600 border-purple-500" : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Alle
-        </a>
-        <a
-          href={qsDep}
-          className={`px-4 py-2 rounded-lg border ${
-            typeParam === "deposit" ? "bg-green-600 border-green-500" : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Einzahlungen
-        </a>
-        <a
-          href={qsWit}
-          className={`px-4 py-2 rounded-lg border ${
-            typeParam === "withdraw" || typeParam === "withdrawal"
-              ? "bg-blue-600 border-blue-500"
-              : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Auszahlungen
-        </a>
+        <a href={qsAll}  className={`px-4 py-2 rounded-lg border ${typeParam==="all" ? "bg-purple-600 border-purple-500" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>Alle</a>
+        <a href={qsDep}  className={`px-4 py-2 rounded-lg border ${typeParam==="deposit" ? "bg-green-600 border-green-500" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>Einzahlungen</a>
+        <a href={qsWit}  className={`px-4 py-2 rounded-lg border ${(typeParam==="withdraw"||typeParam==="withdrawal") ? "bg-blue-600 border-blue-500" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>Auszahlungen</a>
 
         <div className="w-px h-6 bg-white/10 mx-2" />
 
-        <a
-          href={qsToday}
-          className={`px-3 py-2 rounded-lg border ${
-            range === "today" ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          Heute
-        </a>
-        <a
-          href={qs7d}
-          className={`px-3 py-2 rounded-lg border ${
-            range === "7d" ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          7 Tage
-        </a>
-        <a
-          href={qs30d}
-          className={`px-3 py-2 rounded-lg border ${
-            range === "30d" ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"
-          }`}
-        >
-          30 Tage
-        </a>
+        <a href={qsToday} className={`px-3 py-2 rounded-lg border ${range==="today" ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>Heute</a>
+        <a href={qs7d}    className={`px-3 py-2 rounded-lg border ${range==="7d"    ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>7 Tage</a>
+        <a href={qs30d}   className={`px-3 py-2 rounded-lg border ${range==="30d"   ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>30 Tage</a>
 
         <form action="/admin" method="get" className="flex items-center gap-2 ml-auto">
           <input type="hidden" name="type" value={typeParam} />
           <input type="hidden" name="range" value="custom" />
-          <input
-            type="date"
-            name="from"
-            defaultValue={sp.from || ""}
-            className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm"
-          />
+          <input type="date" name="from" defaultValue={sp.from || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
           <span className="text-white/60 text-sm">bis</span>
-          <input
-            type="date"
-            name="to"
-            defaultValue={sp.to || ""}
-            className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm"
-          />
-          <button type="submit" className="px-3 py-2 rounded-lg bg-white/10 border border-white/10 hover:bg-white/20 text-sm">
-            Anwenden
-          </button>
+          <input type="date" name="to" defaultValue={sp.to || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
+          <button type="submit" className="px-3 py-2 rounded-lg bg-white/10 border border-white/10 hover:bg-white/20 text-sm">Anwenden</button>
         </form>
       </div>
 
