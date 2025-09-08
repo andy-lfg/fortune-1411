@@ -7,6 +7,20 @@ import { supabase } from "@/lib/supabaseClient";
 import { motion } from "framer-motion";
 
 /**
+ * Ein Step beschreibt eine der großen Ziffern in der 1–4–1–1 Sequenz.
+ * Nur die "4" hat die eingebettete kleine "1", deshalb ist embeddedOneDelay optional.
+ */
+type Step = {
+  key: "one-left" | "four" | "one-mid" | "one-right";
+  char: "1" | "4";
+  xIndex: number;
+  risePx: number;
+  delay: number;
+  color: "text-emerald-400" | "text-white";
+  embeddedOneDelay?: number;
+};
+
+/**
  * ====== KONFIGURATION ======
  * Du kannst hier schnell die X-Positionen, die "Höhen" (risePx) und die Delays anpassen,
  * damit es 1:1 zu deinen Skizzen passt – ohne Code unten anfassen zu müssen.
@@ -21,21 +35,21 @@ const DIGIT_LAYOUT = {
   // xIndex bestimmt die Reihenfolge/Gruppierung von links nach rechts.
   // risePx ist die "Höhe" über der Grundlinie (je größer, desto höher/ansteigend).
   steps: [
-    { key: "one-left",   char: "1", xIndex: 0, risePx:  0,  delay: 0.10, color: "text-emerald-400" },
-    { key: "four",       char: "4", xIndex: 1, risePx: 10,  delay: 0.60, color: "text-white"      , embeddedOneDelay: 0.95 },
-    { key: "one-mid",    char: "1", xIndex: 2, risePx: 22,  delay: 1.20, color: "text-emerald-400" },
-    { key: "one-right",  char: "1", xIndex: 3, risePx: 32,  delay: 1.60, color: "text-emerald-400" },
-  ] as const,
+    { key: "one-left",  char: "1", xIndex: 0, risePx:  0, delay: 0.10, color: "text-emerald-400" },
+    { key: "four",      char: "4", xIndex: 1, risePx: 10, delay: 0.60, color: "text-white",        embeddedOneDelay: 0.95 },
+    { key: "one-mid",   char: "1", xIndex: 2, risePx: 22, delay: 1.20, color: "text-emerald-400" },
+    { key: "one-right", char: "1", xIndex: 3, risePx: 32, delay: 1.60, color: "text-emerald-400" },
+  ] as Step[],
 
   // Chart-Linie startet nach den Ziffern
   lineDelay: 2.05,
   // Chart-Punkte (werden automatisch aus Steps berechnet, Skalierung unten)
 };
 
-type Step = typeof DIGIT_LAYOUT.steps[number];
+type StepUnion = Step; // nur zur Lesbarkeit
 
 // Kleine Helfer: aus Steps → Punkte für die Uptrend-Linie
-function buildChartPoints(steps: readonly Step[], baseX: number, baseY: number, gap: number) {
+function buildChartPoints(steps: StepUnion[], baseX: number, baseY: number, gap: number) {
   // Wir projizieren jeden Ziffern-Slot auf einen Punkt
   // x = baseX + xIndex * gap * 3.6 (damit die Linie breit genug wird)
   // y = baseY - risePx  (höherer risePx → kleineres y, da SVG von oben zählt)
@@ -64,7 +78,9 @@ export default function HomePage() {
       setIsAuthed(!!data?.user);
       setLoading(false);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // Chart-Geometrie (du kannst baseY anpassen, falls die Linie höher/tiefer sitzen soll)
@@ -143,16 +159,15 @@ export default function HomePage() {
               </div>
 
               <p className="mt-4 text-white/80 text-lg">
-                Die Sequenz folgt deiner Skizze: <span className="text-green-400 font-semibold">1 → 4 (+1) → 1 → 1</span> – als klarer Uptrend.
+                Die Sequenz folgt deiner Skizze:{" "}
+                <span className="text-green-400 font-semibold">1 → 4 (+1) → 1 → 1</span> – als klarer Uptrend.
               </p>
             </div>
 
             {/* CTA-Buttons */}
             <div className="mt-8 flex flex-wrap gap-3">
               {loading ? (
-                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white/70">
-                  lädt…
-                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white/70">lädt…</div>
               ) : isAuthed ? (
                 <>
                   <Link
@@ -198,7 +213,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* rechte Infokachelgruppe (unverändert) */}
+          {/* rechte Infokachelgruppe */}
           <div className="relative">
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
               <div className="grid grid-cols-2 gap-4">
@@ -209,8 +224,8 @@ export default function HomePage() {
               </div>
               <div className="mt-6 h-px w-full bg-white/10" />
               <p className="mt-4 text-sm text-white/70">
-                *Dezentral gedacht: Deine Wallet-Adressen bleiben bei dir. Auszahlungen erfolgen
-                ausschließlich an von dir hinterlegte Adressen.
+                *Dezentral gedacht: Deine Wallet-Adressen bleiben bei dir. Auszahlungen erfolgen ausschließlich an
+                von dir hinterlegte Adressen.
               </p>
             </div>
           </div>
@@ -222,7 +237,11 @@ export default function HomePage() {
         <h2 className="text-2xl md:text-3xl font-bold mb-6">Sicherheit & Transparenz</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <InfoCard
-            icon={<span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20">🔐</span>}
+            icon={
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20">
+                🔐
+              </span>
+            }
             title="Sicherheit an erster Stelle"
             text="Ein- & Auszahlungen laufen ausschließlich über BTC, ETH oder USDT. Du hinterlegst deine Auszahl-Adressen selbst in deinem Profil."
           />
@@ -246,8 +265,8 @@ export default function HomePage() {
             <div>
               <h3 className="text-xl md:text-2xl font-semibold">Warum Fortune 1411?</h3>
               <p className="mt-3 text-white/70">
-                Unsere Mission: Einfacher Zugang zu stabilen, planbaren Erträgen – mit echten
-                Anreizen für Community-Wachstum. Deine Vorteile:
+                Unsere Mission: Einfacher Zugang zu stabilen, planbaren Erträgen – mit echten Anreizen für
+                Community-Wachstum. Deine Vorteile:
               </p>
               <ul className="mt-4 space-y-2 text-sm text-white/80">
                 <li>• Invest-Staffel für faire Basisrendite</li>
@@ -269,8 +288,8 @@ export default function HomePage() {
               </div>
 
               <div className="mt-6 rounded-lg bg-white/5 p-4 text-sm text-white/70">
-                Beispiel: Du investierst in der 0,30%-Staffel, erreichst „Silber“
-                (+0,04% Rang-Bonus) → deine tägliche Basisrendite an Ertrags-Tagen steigt entsprechend.
+                Beispiel: Du investierst in der 0,30%-Staffel, erreichst „Silber“ (+0,04% Rang-Bonus) → deine tägliche
+                Basisrendite an Ertrags-Tagen steigt entsprechend.
               </div>
             </div>
           </div>
@@ -284,8 +303,8 @@ export default function HomePage() {
             <div>
               <h3 className="text-2xl md:text-3xl font-bold">Bereit, dein Geld für dich arbeiten zu lassen?</h3>
               <p className="mt-2 text-white/90">
-                Starte mit wenigen Klicks. Lege deine Wallet-Adressen fest, zahle ein und profitiere
-                von Renditen, Boni und dem globalen Pool.
+                Starte mit wenigen Klicks. Lege deine Wallet-Adressen fest, zahle ein und profitiere von Renditen, Boni
+                und dem globalen Pool.
               </p>
             </div>
             <div className="flex md:justify-end gap-3">
@@ -378,7 +397,7 @@ function ChartDot({ x, y, delay = 0 }: { x: number; y: number; delay?: number })
   );
 }
 
-/* ====== kleine UI-Bausteine (unverändert) ====== */
+/* ====== kleine UI-Bausteine ====== */
 
 function MiniStat({ title, value, hint }: { title: string; value: string; hint?: string }) {
   return (
