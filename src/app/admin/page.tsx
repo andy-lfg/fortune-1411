@@ -3,14 +3,41 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import AdminTable from "./table";
-import { supabaseAdmin } from "@/lib/supabaseAdmin"; // ⬅️ Service-Role Client (Server-only!)
+import { supabaseAdmin } from "@/lib/supabaseAdmin"; // Service-Role Client (Server-only!)
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Hilfstyp für Query-Werte
-type SP = Record<string, string | string[] | undefined>;
+/* ---------- Typen ---------- */
+type SearchParams = {
+  type?: "all" | "deposit" | "withdraw" | "withdrawal";
+  range?: "today" | "7d" | "30d" | "custom";
+  from?: string;
+  to?: string;
+};
 
+type TxType = "deposit" | "withdraw" | "withdrawal";
+interface TxRow {
+  id: string;
+  user_id: string | null;
+  type: TxType;
+  amount: number;
+  currency: string;
+  wallet_address: string | null;
+  status: string;
+  created_at: string;
+  user_email: string | null;
+}
+
+interface Profile {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  nickname?: string | null;
+  email?: string | null;
+}
+
+/* ---------- Utils ---------- */
 function buildURL(params: Record<string, string | undefined>) {
   const sp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => v && sp.set(k, v));
@@ -18,17 +45,22 @@ function buildURL(params: Record<string, string | undefined>) {
   return q ? `?${q}` : "";
 }
 
-export default async function AdminPage(
-  props:
-    | { searchParams?: SP }
-    | { searchParams: Promise<SP> }
-) {
-  // ✅ searchParams robust behandeln (Promise ODER Sync-Objekt)
-  const raw = (props as any).searchParams;
-  const sp: SP =
-    raw && typeof raw.then === "function" ? await raw : (raw ?? {});
+function isPromise<T>(v: unknown): v is Promise<T> {
+  return !!v && typeof (v as any).then === "function";
+}
 
-  // 1) Admin-Check mit dem "anon"-Serverclient (cookie-basiert, RLS-konform)
+/* ---------- Page ---------- */
+export default async function AdminPage(props: {
+  searchParams?: SearchParams | Promise<SearchParams>;
+}) {
+  // 🔧 Next 15: searchParams kann Promise ODER Objekt sein → sauber normalisieren
+  const sp: SearchParams = props.searchParams
+    ? (isPromise<SearchParams>(props.searchParams)
+        ? await props.searchParams
+        : props.searchParams)
+    : {};
+
+  /* 1) Admin-Check mit dem "anon"-Serverclient (cookie-basiert, RLS-konform) */
   const cookieStore = cookies();
   const supabase = createServerComponentClient({ cookies: () => cookieStore });
 
@@ -44,15 +76,11 @@ export default async function AdminPage(
     );
   }
 
-  // 2) Filter lesen (aus sp statt searchParams)
-  const typeParam = (sp.type as SP["type"]) || "all";
-  const range = (sp.range as SP["range"]) || "30d";
-
-  const fromStr = typeof sp.from === "string" ? sp.from : Array.isArray(sp.from) ? sp.from[0] : undefined;
-  const toStr   = typeof sp.to   === "string" ? sp.to   : Array.isArray(sp.to)   ? sp.to[0]   : undefined;
-
-  const fromParam = fromStr ? new Date(fromStr) : undefined;
-  const toParam   = toStr   ? new Date(toStr)   : undefined;
+  /* 2) Filter lesen */
+  const typeParam = sp.type || "all";
+  const range = sp.range || "30d";
+  const fromParam = sp.from ? new Date(sp.from) : undefined;
+  const toParam = sp.to ? new Date(sp.to) : undefined;
 
   const now = new Date();
   let startDate = new Date(now);
@@ -65,33 +93,30 @@ export default async function AdminPage(
     if (toParam) endDate = toParam;
   }
 
-  const startISO = new Date(Date.UTC(
-    startDate.getFullYear(),
-    startDate.getMonth(),
-    startDate.getDate(), 0, 0, 0
-  )).toISOString();
+  const startISO = new Date(
+    Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)
+  ).toISOString();
+  const endISO = new Date(
+    Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999)
+  ).toISOString();
 
-  const endISO = new Date(Date.UTC(
-    endDate.getFullYear(),
-    endDate.getMonth(),
-    endDate.getDate(), 23, 59, 59, 999
-  )).toISOString();
-
-  // 3) Service-Role Client NUR serverseitig verwenden (bypasst RLS, aber nur nach Admin-Check!)
+  /* 3) Service-Role Client NUR serverseitig verwenden (bypasst RLS, aber nur nach Admin-Check!) */
   let txQuery = supabaseAdmin
     .from("transactions")
-    .select("id, user_id, type, amount, currency, wallet_address, status, created_at, user_email")
+    .select(
+      "id, user_id, type, amount, currency, wallet_address, status, created_at, user_email"
+    )
     .gte("created_at", startISO)
     .lte("created_at", endISO)
     .order("created_at", { ascending: false })
     .limit(500);
 
   if (typeParam !== "all") {
-    const normalized = typeParam === "withdrawal" ? "withdraw" : typeParam;
-    txQuery = txQuery.eq("type", normalized as any);
+    const normalized: TxType = typeParam === "withdrawal" ? "withdraw" : (typeParam as TxType);
+    txQuery = txQuery.eq("type", normalized);
   }
 
-  const { data: txRaw, error: txErr } = await txQuery;
+  const { data: txRaw, error: txErr } = await txQuery as { data: TxRow[] | null; error: any };
   if (txErr) {
     return (
       <section className="p-6">
@@ -100,16 +125,16 @@ export default async function AdminPage(
       </section>
     );
   }
-  const tx = txRaw || [];
+  const tx: TxRow[] = txRaw || [];
 
-  // 4) Alle betroffenen Profile OHNE RLS holen (Service-Role)
-  const userIds = Array.from(new Set(tx.map((t: any) => t.user_id).filter(Boolean)));
-  let profMap: Record<string, any> = {};
+  /* 4) Alle betroffenen Profile OHNE RLS holen (Service-Role) */
+  const userIds = Array.from(new Set(tx.map(t => t.user_id).filter((v): v is string => !!v)));
+  let profMap: Record<string, Profile> = {};
   if (userIds.length) {
     const { data: profs, error: pErr } = await supabaseAdmin
       .from("profiles")
       .select("id, first_name, last_name, nickname, email")
-      .in("id", userIds);
+      .in("id", userIds) as { data: Profile[] | null; error: any };
     if (pErr) {
       return (
         <section className="p-6">
@@ -118,30 +143,36 @@ export default async function AdminPage(
         </section>
       );
     }
-    (profs || []).forEach((p: any) => { profMap[p.id] = p; });
+    (profs || []).forEach(p => {
+      profMap[p.id] = p;
+    });
   }
 
-  // 5) Transaktionszeilen mit Profilfeldern mergen (für AdminTable)
-  const rows = tx.map((t: any) => ({
+  /* 5) Transaktionszeilen mit Profilfeldern mergen (für AdminTable) */
+  const rows = tx.map(t => ({
     ...t,
-    profile_first_name: profMap[t.user_id]?.first_name ?? null,
-    profile_last_name:  profMap[t.user_id]?.last_name ?? null,
-    profile_nickname:   profMap[t.user_id]?.nickname ?? null,
-    profile_email:      profMap[t.user_id]?.email ?? t.user_email ?? null,
+    profile_first_name: profMap[t.user_id || ""]?.first_name ?? null,
+    profile_last_name:  profMap[t.user_id || ""]?.last_name ?? null,
+    profile_nickname:   profMap[t.user_id || ""]?.nickname ?? null,
+    profile_email:      profMap[t.user_id || ""]?.email ?? t.user_email ?? null,
   }));
 
   // Summen
-  const totalDeposits  = rows.filter((r: any) => r.type === "deposit" || r.type === "DEPOSIT").reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-  const totalWithdraws = rows.filter((r: any) => r.type === "withdraw" || r.type === "withdrawal" || r.type === "WITHDRAW").reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const totalDeposits = rows
+    .filter(r => r.type === "deposit")
+    .reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalWithdraws = rows
+    .filter(r => r.type === "withdraw" || r.type === "withdrawal")
+    .reduce((s, r) => s + Number(r.amount || 0), 0);
   const net = totalDeposits - totalWithdraws;
 
-  // Filter-Links (nutzt sp.* statt searchParams.*)
-  const qsAll   = buildURL({ type: "all",      range: range as string, from: fromStr, to: toStr });
-  const qsDep   = buildURL({ type: "deposit",  range: range as string, from: fromStr, to: toStr });
-  const qsWit   = buildURL({ type: "withdraw", range: range as string, from: fromStr, to: toStr });
-  const qsToday = buildURL({ type: typeParam as string, range: "today" });
-  const qs7d    = buildURL({ type: typeParam as string, range: "7d" });
-  const qs30d   = buildURL({ type: typeParam as string, range: "30d" });
+  // Filter-Links (verwenden die bereits normalisierten sp-Werte)
+  const qsAll   = buildURL({ type: "all",      range, from: sp.from, to: sp.to });
+  const qsDep   = buildURL({ type: "deposit",  range, from: sp.from, to: sp.to });
+  const qsWit   = buildURL({ type: "withdraw", range, from: sp.from, to: sp.to });
+  const qsToday = buildURL({ type: typeParam, range: "today" });
+  const qs7d    = buildURL({ type: typeParam, range: "7d" });
+  const qs30d   = buildURL({ type: typeParam, range: "30d" });
 
   return (
     <section className="mx-auto max-w-7xl px-4 py-16">
@@ -169,11 +200,11 @@ export default async function AdminPage(
         <a href={qs30d}   className={`px-3 py-2 rounded-lg border ${range==="30d"   ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>30 Tage</a>
 
         <form action="/admin" method="get" className="flex items-center gap-2 ml-auto">
-          <input type="hidden" name="type"  value={(typeParam as string) || ""} />
+          <input type="hidden" name="type" value={typeParam} />
           <input type="hidden" name="range" value="custom" />
-          <input type="date" name="from" defaultValue={fromStr || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
+          <input type="date" name="from" defaultValue={sp.from || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
           <span className="text-white/60 text-sm">bis</span>
-          <input type="date" name="to"   defaultValue={toStr   || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
+          <input type="date" name="to" defaultValue={sp.to || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
           <button type="submit" className="px-3 py-2 rounded-lg bg-white/10 border border-white/10 hover:bg-white/20 text-sm">Anwenden</button>
         </form>
       </div>
