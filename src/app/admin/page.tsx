@@ -23,14 +23,10 @@ function buildURL(params: Record<string, string | undefined>) {
 }
 
 /**
- * WICHTIG:
- * - Wir typisieren die Props absichtlich als `any`, weil Next 15 `searchParams`
- *   teils als Promise liefert. So vermeiden wir die build-breakenden TS-Fehler.
+ * Lockere Typisierung, damit Next 15 (searchParams teils Promise) nicht kollidiert.
  */
-// @ts-expect-error: lockere Typisierung für Next 15 searchParams (Promise/Objekt)
-export default async function AdminPage({ searchParams }: any) {
-  // Egal ob Promise oder Objekt: await gibt einfach den Wert zurück.
-  const spRaw = await (searchParams ?? {});
+export default async function AdminPage(props: any) {
+  const spRaw = await (props?.searchParams ?? {});
   const sp: SearchParams = (spRaw ?? {}) as SearchParams;
 
   // 1) Admin-Check (RLS-konform)
