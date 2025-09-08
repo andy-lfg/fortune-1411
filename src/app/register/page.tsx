@@ -1,16 +1,21 @@
+// src/app/register/page.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 import toast, { Toaster } from "react-hot-toast";
 
-export default function RegisterPage() {
-  const router = useRouter();
-  const sp = useSearchParams();
+/**
+ * Empfohlener Fix für Next 15:
+ * useSearchParams NUR in einer inneren Komponente nutzen,
+ * die in <Suspense> gewrappt ist.
+ */
 
-  // Referral-ID aus ?ref= (wir erwarten user_id/UUID)
-  const refFromUrl = sp.get("ref") || "";
+function RegisterInner() {
+  const router = useRouter();
+  const sp = useSearchParams();               // <- sicher innerhalb Suspense
+  const refFromUrl = sp.get("ref") || "";     // Referral-ID aus ?ref=
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,7 +24,7 @@ export default function RegisterPage() {
   const [nickname, setNickname] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Merke die Referral-ID frühzeitig (robust bei Navigation / Confirm-Flows)
+  // Referral-ID früh speichern (robust bei Redirects)
   useEffect(() => {
     if (refFromUrl) {
       try {
@@ -28,7 +33,6 @@ export default function RegisterPage() {
     }
   }, [refFromUrl]);
 
-  // UI-Hinweis, wen man angibt (nur hübsch)
   const referralPreview = useMemo(() => refFromUrl, [refFromUrl]);
 
   async function handleRegister() {
@@ -56,20 +60,13 @@ export default function RegisterPage() {
     } catch {
       refId = refFromUrl || null;
     }
+    if (newUser && refId === newUser.id) refId = null;
 
-    if (newUser && refId === newUser.id) {
-      // Self-ref verhindern
-      refId = null;
-    }
-
-    // 3) Versuchen, Profil direkt zu upserten – klappt nur, wenn Session existiert (RLS!)
+    // 3) Profil upserten (wenn Session sofort vorhanden)
     let upsertSucceeded = false;
     if (newUser) {
-      // Prüfen, ob direkt nach signUp schon eine Session da ist
       const { data: sessData } = await supabase.auth.getSession();
-      const hasSession = !!sessData?.session;
-
-      if (hasSession) {
+      if (sessData?.session) {
         const { error: profErr } = await supabase.from("profiles").upsert({
           id: newUser.id,
           first_name: firstName,
@@ -77,10 +74,8 @@ export default function RegisterPage() {
           nickname,
           referred_by: refId,
         });
-
         if (!profErr) {
           upsertSucceeded = true;
-          // Aufräumen
           try {
             localStorage.removeItem("pending_ref");
             localStorage.removeItem("pending_profile");
@@ -89,7 +84,7 @@ export default function RegisterPage() {
       }
     }
 
-    // 4) Fallback: keine Session → in localStorage vormerken, Account-Seite initialisiert später
+    // 4) Fallback: später auf /account initialisieren
     if (!upsertSucceeded) {
       try {
         localStorage.setItem(
@@ -108,7 +103,6 @@ export default function RegisterPage() {
     toast.success("Registriert! Bitte E-Mail bestätigen.");
     setLoading(false);
 
-    // Weiter zur Login-Seite (oder direkt /account, je nach Flow)
     setTimeout(() => router.push("/login"), 800);
   }
 
@@ -172,3 +166,19 @@ export default function RegisterPage() {
     </section>
   );
 }
+
+// Seite rendert eine Suspense-Grenze, in der die eigentliche Logik läuft.
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<section className="mx-auto max-w-md px-4 py-16 text-white/60">lädt…</section>}>
+      <RegisterInner />
+    </Suspense>
+  );
+}
+
+/**
+ * Optionaler Ausweichweg (nicht nötig, wenn Suspense genutzt wird):
+ * Falls du die Seite komplett aus dem Prerender nehmen willst,
+ * entkommentiere die nächste Zeile.
+ */
+// export const dynamic = "force-dynamic";
