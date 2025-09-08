@@ -8,12 +8,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin"; // ⬅️ Service-Role Clie
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type SearchParams = {
-  type?: "all" | "deposit" | "withdraw" | "withdrawal";
-  range?: "today" | "7d" | "30d" | "custom";
-  from?: string;
-  to?: string;
-};
+// Hilfstyp für Query-Werte
+type SP = Record<string, string | string[] | undefined>;
 
 function buildURL(params: Record<string, string | undefined>) {
   const sp = new URLSearchParams();
@@ -22,7 +18,16 @@ function buildURL(params: Record<string, string | undefined>) {
   return q ? `?${q}` : "";
 }
 
-export default async function AdminPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function AdminPage(
+  props:
+    | { searchParams?: SP }
+    | { searchParams: Promise<SP> }
+) {
+  // ✅ searchParams robust behandeln (Promise ODER Sync-Objekt)
+  const raw = (props as any).searchParams;
+  const sp: SP =
+    raw && typeof raw.then === "function" ? await raw : (raw ?? {});
+
   // 1) Admin-Check mit dem "anon"-Serverclient (cookie-basiert, RLS-konform)
   const cookieStore = cookies();
   const supabase = createServerComponentClient({ cookies: () => cookieStore });
@@ -39,11 +44,15 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
     );
   }
 
-  // 2) Filter lesen
-  const typeParam = (searchParams.type || "all");
-  const range = (searchParams.range || "30d");
-  const fromParam = searchParams.from ? new Date(searchParams.from) : undefined;
-  const toParam = searchParams.to ? new Date(searchParams.to) : undefined;
+  // 2) Filter lesen (aus sp statt searchParams)
+  const typeParam = (sp.type as SP["type"]) || "all";
+  const range = (sp.range as SP["range"]) || "30d";
+
+  const fromStr = typeof sp.from === "string" ? sp.from : Array.isArray(sp.from) ? sp.from[0] : undefined;
+  const toStr   = typeof sp.to   === "string" ? sp.to   : Array.isArray(sp.to)   ? sp.to[0]   : undefined;
+
+  const fromParam = fromStr ? new Date(fromStr) : undefined;
+  const toParam   = toStr   ? new Date(toStr)   : undefined;
 
   const now = new Date();
   let startDate = new Date(now);
@@ -56,11 +65,19 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
     if (toParam) endDate = toParam;
   }
 
-  const startISO = new Date(Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0)).toISOString();
-  const endISO   = new Date(Date.UTC(endDate.getFullYear(),   endDate.getMonth(),   endDate.getDate(),   23, 59, 59, 999)).toISOString();
+  const startISO = new Date(Date.UTC(
+    startDate.getFullYear(),
+    startDate.getMonth(),
+    startDate.getDate(), 0, 0, 0
+  )).toISOString();
+
+  const endISO = new Date(Date.UTC(
+    endDate.getFullYear(),
+    endDate.getMonth(),
+    endDate.getDate(), 23, 59, 59, 999
+  )).toISOString();
 
   // 3) Service-Role Client NUR serverseitig verwenden (bypasst RLS, aber nur nach Admin-Check!)
-  //    Achtung: Nie in Client-Komponenten importieren!
   let txQuery = supabaseAdmin
     .from("transactions")
     .select("id, user_id, type, amount, currency, wallet_address, status, created_at, user_email")
@@ -86,7 +103,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
   const tx = txRaw || [];
 
   // 4) Alle betroffenen Profile OHNE RLS holen (Service-Role)
-  const userIds = Array.from(new Set(tx.map(t => t.user_id).filter(Boolean)));
+  const userIds = Array.from(new Set(tx.map((t: any) => t.user_id).filter(Boolean)));
   let profMap: Record<string, any> = {};
   if (userIds.length) {
     const { data: profs, error: pErr } = await supabaseAdmin
@@ -101,11 +118,11 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
         </section>
       );
     }
-    (profs || []).forEach(p => { profMap[p.id] = p; });
+    (profs || []).forEach((p: any) => { profMap[p.id] = p; });
   }
 
   // 5) Transaktionszeilen mit Profilfeldern mergen (für AdminTable)
-  const rows = tx.map(t => ({
+  const rows = tx.map((t: any) => ({
     ...t,
     profile_first_name: profMap[t.user_id]?.first_name ?? null,
     profile_last_name:  profMap[t.user_id]?.last_name ?? null,
@@ -114,17 +131,17 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
   }));
 
   // Summen
-  const totalDeposits = rows.filter(r => r.type === "deposit").reduce((s, r) => s + Number(r.amount || 0), 0);
-  const totalWithdraws = rows.filter(r => (r.type === "withdraw" || r.type === "withdrawal")).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalDeposits  = rows.filter((r: any) => r.type === "deposit" || r.type === "DEPOSIT").reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const totalWithdraws = rows.filter((r: any) => r.type === "withdraw" || r.type === "withdrawal" || r.type === "WITHDRAW").reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
   const net = totalDeposits - totalWithdraws;
 
-  // Filter-Links
-  const qsAll   = buildURL({ type: "all",      range, from: searchParams.from, to: searchParams.to });
-  const qsDep   = buildURL({ type: "deposit",  range, from: searchParams.from, to: searchParams.to });
-  const qsWit   = buildURL({ type: "withdraw", range, from: searchParams.from, to: searchParams.to });
-  const qsToday = buildURL({ type: typeParam, range: "today" });
-  const qs7d    = buildURL({ type: typeParam, range: "7d" });
-  const qs30d   = buildURL({ type: typeParam, range: "30d" });
+  // Filter-Links (nutzt sp.* statt searchParams.*)
+  const qsAll   = buildURL({ type: "all",      range: range as string, from: fromStr, to: toStr });
+  const qsDep   = buildURL({ type: "deposit",  range: range as string, from: fromStr, to: toStr });
+  const qsWit   = buildURL({ type: "withdraw", range: range as string, from: fromStr, to: toStr });
+  const qsToday = buildURL({ type: typeParam as string, range: "today" });
+  const qs7d    = buildURL({ type: typeParam as string, range: "7d" });
+  const qs30d   = buildURL({ type: typeParam as string, range: "30d" });
 
   return (
     <section className="mx-auto max-w-7xl px-4 py-16">
@@ -152,11 +169,11 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
         <a href={qs30d}   className={`px-3 py-2 rounded-lg border ${range==="30d"   ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10 hover:bg-white/10"}`}>30 Tage</a>
 
         <form action="/admin" method="get" className="flex items-center gap-2 ml-auto">
-          <input type="hidden" name="type" value={typeParam} />
+          <input type="hidden" name="type"  value={(typeParam as string) || ""} />
           <input type="hidden" name="range" value="custom" />
-          <input type="date" name="from" defaultValue={searchParams.from || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
+          <input type="date" name="from" defaultValue={fromStr || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
           <span className="text-white/60 text-sm">bis</span>
-          <input type="date" name="to" defaultValue={searchParams.to || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
+          <input type="date" name="to"   defaultValue={toStr   || ""} className="rounded-md bg-black/30 border border-white/10 px-2 py-1 text-sm" />
           <button type="submit" className="px-3 py-2 rounded-lg bg-white/10 border border-white/10 hover:bg-white/20 text-sm">Anwenden</button>
         </form>
       </div>
